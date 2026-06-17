@@ -35,45 +35,91 @@ let ANTHROPIC_KEY = process.env.ANTHROPIC_KEY || '';
 const NUMERO_MARCELO = process.env.NUMERO_MARCELO || ''; // ex: 5577991234567
 const conversas = {}; // { numero: { etapa, dados, historico } }
 
+function respostaAutomatica(texto, conv) {
+  const t = texto.toLowerCase().trim();
+  const etapa = conv.etapa || 'inicio';
+
+  // Saudações / interesse
+  if (etapa === 'inicio') {
+    if (t.match(/sim|quero|interesse|oi|ol[aá]|bom dia|boa tarde|boa noite|info|saib/)) {
+      conv.etapa = 'pedir_nome';
+      return 'Olá! 😊 Sou o Ben, consultor da *Bravo Consig*!\n\nFico feliz com seu interesse! Para preparar sua proposta, pode me dizer seu *nome completo*?';
+    }
+    conv.etapa = 'pedir_nome';
+    return 'Olá! 😊 Sou o Ben, consultor da *Bravo Consig*!\n\nPode me dizer seu *nome completo* para eu preparar sua proposta?';
+  }
+
+  if (etapa === 'pedir_nome') {
+    conv.dados.nome = texto.trim();
+    conv.etapa = 'pedir_tipo';
+    return `Prazer, *${conv.dados.nome}*! 👋\n\nVocê é:\n1️⃣ Aposentado/Pensionista INSS\n2️⃣ Servidor Público\n3️⃣ Trabalhador CLT\n\nDigite o número da sua opção:`;
+  }
+
+  if (etapa === 'pedir_tipo') {
+    if (t.includes('1') || t.match(/inss|aposentad|pensionist/)) {
+      conv.dados.tipo = 'inss';
+      conv.dados.taxaMensal = 0.0179;
+    } else if (t.includes('2') || t.match(/servidor|prefeitura|estado|federal/)) {
+      conv.dados.tipo = 'servidor';
+      conv.dados.taxaMensal = 0.0159;
+    } else if (t.includes('3') || t.match(/clt|empregad|empresa|carteira/)) {
+      conv.dados.tipo = 'clt';
+      conv.dados.taxaMensal = 0.0199;
+    } else {
+      return 'Por favor, digite *1*, *2* ou *3* para continuar 😊';
+    }
+    conv.etapa = 'pedir_salario';
+    const label = conv.dados.tipo === 'inss' ? 'benefício' : 'salário';
+    return `Perfeito! 👍\n\nQual o valor do seu *${label} mensal*?\n_(Ex: 1500 ou R$ 2.300)_`;
+  }
+
+  if (etapa === 'pedir_salario') {
+    const match = texto.match(/[\d.,]+/);
+    if (!match) return 'Pode me informar o valor do seu salário/benefício? 😊\n_(Ex: 1500 ou R$ 2.300)_';
+    const val = parseFloat(match[0].replace(/\./g, '').replace(',', '.'));
+    if (val < 500 || val > 50000) return 'Valor inválido. Por favor informe seu salário mensal 😊';
+    
+    conv.dados.salario = val;
+    conv.etapa = 'apresentar_proposta';
+    
+    // Calcular simulação
+    const margem = val * (conv.dados.tipo === 'inss' ? 0.35 : 0.30);
+    const taxa = conv.dados.taxaMensal;
+    const prazo = 84;
+    const fator = (taxa * Math.pow(1 + taxa, prazo)) / (Math.pow(1 + taxa, prazo) - 1);
+    const liberado = (margem / fator).toFixed(2);
+    const parcelaFmt = margem.toFixed(2).replace('.', ',');
+    const liberadoFmt = parseFloat(liberado).toLocaleString('pt-BR', {minimumFractionDigits: 2});
+    
+    conv.dados.valorLiberado = liberado;
+    conv.qualificado = true;
+    
+    return `🎉 *${conv.dados.nome}*, tenho uma ótima notícia!\n\n💰 *Valor liberado: R$ ${liberadoFmt}*\n📅 Em até *${prazo}x* de R$ *${parcelaFmt}*\n✅ Sem consulta ao SPC/Serasa\n✅ Dinheiro na conta em até 24h\n\nTem interesse em prosseguir? Digite *SIM* para falar com nosso consultor! 😊`;
+  }
+
+  if (etapa === 'apresentar_proposta') {
+    if (t.match(/sim|quero|confirmo|yes|pode|vamo/)) {
+      conv.etapa = 'encerrado';
+      return `Ótimo! 🎊\n\nUm de nossos consultores vai entrar em contato agora mesmo para finalizar sua proposta!\n\nObrigado pela confiança na *Bravo Consig*! 💚`;
+    }
+    if (t.match(/n[aã]o|nao|neg|outro/)) {
+      conv.etapa = 'encerrado';
+      return 'Tudo bem! 😊 Se mudar de ideia, pode nos chamar a qualquer momento. Tenha um ótimo dia! 👋';
+    }
+    return 'Digite *SIM* para prosseguir ou *NÃO* para encerrar 😊';
+  }
+
+  if (etapa === 'encerrado') {
+    conv.etapa = 'inicio';
+    return 'Olá! 😊 Posso te ajudar com algo mais?';
+  }
+
+  return 'Olá! 😊 Posso te ajudar com informações sobre crédito consignado. Digite *OI* para começar!';
+}
+
 async function chamarGemini(historico, systemPrompt) {
-  return new Promise((resolve, reject) => {
-    // Converter histórico para formato Gemini
-    const contents = historico.map(m => ({
-      role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }]
-    }));
-    
-    const body = JSON.stringify({
-      system_instruction: { parts: [{ text: systemPrompt }] },
-      contents: contents,
-      generationConfig: { maxOutputTokens: 500, temperature: 0.7 }
-    });
-    
-    const path = '/v1beta/models/gemini-2.0-flash:generateContent?key=' + encodeURIComponent(ANTHROPIC_KEY);
-    
-    const req = https.request({
-      hostname: 'generativelanguage.googleapis.com',
-      path: path,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(body)
-      }
-    }, res => {
-      let data = '';
-      res.on('data', c => data += c);
-      res.on('end', () => {
-        try {
-          const d = JSON.parse(data);
-          const text = d.candidates?.[0]?.content?.parts?.[0]?.text || '';
-          resolve(text);
-        } catch(e) { reject(e); }
-      });
-    });
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
+  // Versão sem API - respostas automáticas
+  return null;
 }
 
 function simularCredito(dados) {
@@ -158,7 +204,8 @@ async function processarMensagemAgente(numero, texto) {
     contextoSimulacao = `\n\nDADOS DO LEAD: tipo=${conv.dados.tipo}, salário=R$${conv.dados.salario}\nSIMULAÇÃO: Pode liberar R$${sim.valorLiberado} em ${sim.prazo}x de R$${sim.parcela}`;
   }
   
-  const resposta = await chamarGemini(conv.historico, SYSTEM_PROMPT + contextoSimulacao);
+  // Usar resposta automática
+  const resposta = respostaAutomatica(texto, conv);
   
   // Verificar se lead foi qualificado
   if (resposta.includes('[LEAD_QUALIFICADO]') && !conv.qualificado) {
