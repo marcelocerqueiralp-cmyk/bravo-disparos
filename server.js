@@ -52,40 +52,62 @@ function respostaAutomatica(texto, conv) {
   const primeiroNome = nome.split(' ')[0] || '';
 
   const hora = new Date().getHours();
-  const saudacao = hora < 12 ? 'Bom Dia!' : hora < 18 ? 'Boa Tarde!' : 'Boa Noite!';
+  const saudacao = hora < 12 ? 'Bom dia' : hora < 18 ? 'Boa tarde' : 'Boa noite';
 
+  // ETAPA 1: Primeira mensagem do agente — saudação com nome
   if (etapa === 'inicio') {
     conv.etapa = 'aguardar_resposta';
     if (primeiroNome) {
-      return saudacao + '\n' + primeiroNome + '.\n\nTudo Bem?';
+      return saudacao + ', ' + primeiroNome + '! Tudo bem?\nMarcelo, analista da Bravo Consig.\n\nTenho uma boa notícia sobre seu Consignado. Posso te encaminhar a análise?';
     }
-    return saudacao + '\n\nTudo Bem?';
+    return saudacao + '! Tudo bem?\nMarcelo, analista da Bravo Consig.\n\nTenho uma boa notícia sobre seu Consignado. Posso te encaminhar a análise?';
   }
 
+  // ETAPA 2: Cliente respondeu — verificar interesse
   if (etapa === 'aguardar_resposta') {
+    // Cliente não tem interesse
+    if (t.match(/n[aã]o|nao|neg|agora n|sem interesse|outro momento/)) {
+      conv.etapa = 'encerrado';
+      return saudacao + '! Sem problemas 😊\nQualquer coisa que precisar, estamos à disposição!\n\n*Bravo Consig* — Sua loja de Crédito 💚';
+    }
+    // Cliente tem interesse ou respondeu qualquer coisa positiva
     conv.etapa = 'pedir_cpf';
-    return 'Para verificar as oportunidades disponíveis para você, pode me informar seu *CPF*?';
+    return 'Bravo Consignado, estamos felizes com seu contato!\n\nPor gentileza, informe o seu *CPF* para iniciarmos a análise de seu crédito.';
   }
 
+  // ETAPA 3: Aguardando CPF
   if (etapa === 'pedir_cpf') {
     const cpfLimpo = texto.replace(/\D/g, '');
+    
     if (cpfLimpo.length === 11) {
       conv.dados.cpf = cpfLimpo;
       conv.etapa = 'encerrado';
       conv.qualificado = true;
-      return 'Perfeito! ✅\n\nJá estamos verificando as oportunidades disponíveis para você.\n\nEm breve nosso analista entrará em contato com as melhores opções! 😊';
+      return 'Obrigado' + (primeiroNome ? ', ' + primeiroNome : '') + '! ✅\n\nJá estamos fazendo a análise de possibilidade de crédito para você.\n\nEm breve nosso analista entrará em contato! 😊';
     }
-    if (cpfLimpo.length > 0) {
+
+    // Resposta que não é CPF
+    if (cpfLimpo.length > 0 && cpfLimpo.length < 11) {
       return 'Por gentileza, informe o CPF completo com 11 dígitos 😊';
     }
-    return 'Para verificar as oportunidades disponíveis, pode me informar seu *CPF*?';
+
+    // Cliente fez pergunta ou comentário sem mandar CPF
+    if (t.match(/tem algo|tem nada|alguma coisa|o que tem|novidade/)) {
+      return 'Sim' + (primeiroNome ? ', ' + primeiroNome : '') + '! Temos oportunidades para você.\n\nMe informe seu *CPF* para eu verificar o que está disponível 😊';
+    }
+
+    return 'Por gentileza, informe o seu *CPF* para iniciarmos a análise de seu crédito.';
   }
 
+  // ETAPA ENCERRADO: Cliente manda mais mensagens
   if (etapa === 'encerrado') {
-    return 'Nosso analista já está verificando sua situação e entrará em contato em breve! 😊';
+    if (t.match(/tem algo|tem nada|alguma coisa|novidade|o que tem/)) {
+      return saudacao + (primeiroNome ? ', ' + primeiroNome : '') + '! 😊\n\nNosso analista já está verificando as oportunidades disponíveis para você e entrará em contato em breve!';
+    }
+    return 'Nosso analista já está com sua análise e entrará em contato em breve! 😊\n\nQualquer dúvida, estamos à disposição.';
   }
 
-  return saudacao + '\n\nComo posso te ajudar?';
+  return saudacao + '! Como posso te ajudar?';
 }
 
 async function chamarGemini(historico, systemPrompt) {
