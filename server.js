@@ -391,14 +391,58 @@ async function conectarWhatsApp() {
 
 }
 
+const LIMITE_DIARIO = 200;
+let enviadosHoje = 0;
+let dataHoje = new Date().toDateString();
+
+function dentroHorarioComercial() {
+  const agora = new Date();
+  const hora = agora.getHours();
+  return hora >= 8 && hora < 18;
+}
+
+function resetarContadorDiario() {
+  const hoje = new Date().toDateString();
+  if (hoje !== dataHoje) {
+    dataHoje = hoje;
+    enviadosHoje = 0;
+  }
+}
+
+async function esperarHorarioComercial() {
+  while (!dentroHorarioComercial()) {
+    const agora = new Date();
+    const hora = agora.getHours();
+    if (hora >= 18) {
+      addLog('info', '🌙 Fora do horário. Disparos retomam às 08h.');
+    }
+    await delay(60000, 60000); // checar a cada 1 min
+    if (pausado) return;
+  }
+}
+
 async function processarFila(mensagem) {
   disparando = true;
   pausado = false;
+  let contadorSessao = 0;
 
   for (let i = 0; i < fila.length; i++) {
     if (pausado) {
-      addLog('info', '⏸ Disparo pausado.');
+      addLog('info', '⏸ Disparo pausado pelo usuário.');
       break;
+    }
+
+    // Checar horário comercial
+    await esperarHorarioComercial();
+    if (pausado) break;
+
+    // Checar limite diário
+    resetarContadorDiario();
+    if (enviadosHoje >= LIMITE_DIARIO) {
+      addLog('info', '📊 Limite diário de ' + LIMITE_DIARIO + ' mensagens atingido. Retomando amanhã às 08h.');
+      await esperarHorarioComercial();
+      resetarContadorDiario();
+      if (enviadosHoje >= LIMITE_DIARIO) break;
     }
 
     const contato = fila[i];
@@ -412,26 +456,47 @@ async function processarFila(mensagem) {
     try {
       const numero = formatarNumero(contato.telefone);
       const texto = personalizarMensagem(mensagem, contato);
+
+      // Simular "digitando..." antes de enviar
+      await sock.sendPresenceUpdate('composing', numero);
+      const tempoDigitando = Math.floor(Math.random() * 4000) + 2000; // 2-6 segundos digitando
+      await delay(tempoDigitando, tempoDigitando);
+      await sock.sendPresenceUpdate('paused', numero);
+
       await sock.sendMessage(numero, { text: texto });
       contato.status = 'enviado';
       stats.enviados++;
       stats.pendentes--;
-      addLog('ok', `✅ ${contato.nome} (${contato.telefone})`);
+      enviadosHoje++;
+      contadorSessao++;
+      addLog('ok', '✅ ' + (contato.nome||contato.telefone) + ' (' + enviadosHoje + '/' + LIMITE_DIARIO + ' hoje)');
     } catch (e) {
       contato.status = 'erro';
       contato.erro = e.message;
       stats.erros++;
       stats.pendentes--;
-      addLog('erro', `❌ ${contato.nome} (${contato.telefone}) — ${e.message}`);
+      addLog('erro', '❌ ' + (contato.nome||contato.telefone) + ' — ' + e.message);
     }
 
     if (i < fila.length - 1 && !pausado) {
-      await delay(8000, 15000);
+      // A cada 10 mensagens, pausa longa (5-10 min)
+      if (contadorSessao > 0 && contadorSessao % 10 === 0) {
+        const pausaMin = Math.floor(Math.random() * 5) + 5;
+        addLog('info', '☕ Pausa humana de ' + pausaMin + ' minutos após 10 envios...');
+        await delay(pausaMin * 60000, pausaMin * 60000);
+      } else {
+        // Intervalo humano: 45 segundos a 3 minutos
+        const minSeg = 45;
+        const maxSeg = 180;
+        const segundos = Math.floor(Math.random() * (maxSeg - minSeg)) + minSeg;
+        addLog('info', '⏳ Próximo envio em ' + segundos + 's...');
+        await delay(segundos * 1000, segundos * 1000);
+      }
     }
   }
 
   disparando = false;
-  addLog('info', '🏁 Disparo finalizado!');
+  addLog('info', '🏁 Disparo finalizado! Total hoje: ' + enviadosHoje);
 }
 
 // Rotas
