@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: bravo-disparos
+    env: node
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: EVOLUTION_URL
+        value: https://SEU-EVOLUTION-URL-AQUI
+      - key: EVOLUTION_KEY
+        value: SUA-API-KEY-AQUI
+      - key: INSTANCE_NAME
+        value: bravo
+      - key: DELAY_MIN
+        value: 8000
+      - key: DELAY_MAX
+        value: 15000
