@@ -535,6 +535,66 @@ app.delete('/conversa/:numero', (req, res) => {
   res.json({ ok: true });
 });
 
+
+app.post('/gerar-mensagem', async (req, res) => {
+  const { nome } = req.body || {};
+  const key = ANTHROPIC_KEY || process.env.ANTHROPIC_KEY;
+
+  // Templates variados para servidores públicos da Bahia
+  const templates = [
+    'Olá {nome}! 👋 Sou o Ben, analista da Bravo Consig. Como servidor público da Bahia, você pode ter margem disponível para crédito consignado. Posso verificar quanto está liberado pra você?',
+    'Oi {nome}! 😊 Aqui é o Ben da Bravo Consig. Temos condições especiais de crédito consignado para servidores do Estado da Bahia. Quer saber quanto você tem disponível?',
+    '{nome}, bom dia! Sou analista da Bravo Consig 👋 Identificamos que você pode ter crédito consignado disponível. Parcelas no contracheque, sem burocracia. Posso verificar pra você?',
+    'Olá {nome}! Aqui é o Ben da Bravo Consig. Muitos servidores da Bahia estão aproveitando nossas condições de crédito consignado. Posso verificar sua margem disponível agora?',
+    '{nome}, tudo bem? 😊 Ben aqui, da Bravo Consig. Como servidor público, você tem direito às menores taxas de consignado. Quer que eu verifique quanto está liberado no seu contracheque?',
+    'Oi {nome}! Sou o Ben, da Bravo Consig 👋 Tenho uma proposta de crédito consignado para servidores da Bahia. Sem consulta ao SPC, desconto direto na folha. Posso te passar os detalhes?',
+    '{nome}, olá! Aqui é o Ben da Bravo Consig. Servidores públicos da Bahia podem ter até R$50mil em crédito consignado disponível. Quer saber o seu limite?',
+    'Olá {nome}! 😊 Ben aqui, analista da Bravo Consig. Temos aprovação rápida de crédito consignado para servidores do Estado. Posso verificar sua situação agora mesmo?'
+  ];
+
+  // Tentar gerar com Gemini se tiver chave
+  if (key && nome) {
+    try {
+      const prompt = 'Crie UMA mensagem de WhatsApp curta (maximo 2 linhas) para prospeccao de credito consignado para servidor publico da Bahia chamado ' + nome + '. Seja natural, humano, informal mas profissional. Assine como Ben da Bravo Consig. Use 1 emoji no maximo. Termine com uma pergunta que convide a responder. Nao mencione taxas.';
+      
+      const bodyStr = JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: 150, temperature: 0.9 }
+      });
+
+      const url = new URL('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent');
+      url.searchParams.set('key', key);
+
+      const geminiResp = await new Promise((resolve) => {
+        const req2 = https.request({
+          hostname: url.hostname,
+          path: url.pathname + url.search,
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) }
+        }, r => {
+          let d = ''; r.on('data', c => d += c);
+          r.on('end', () => {
+            try { resolve(JSON.parse(d)); } catch(e) { resolve(null); }
+          });
+        });
+        req2.on('error', () => resolve(null));
+        req2.write(bodyStr); req2.end();
+      });
+
+      const texto = geminiResp?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (texto && texto.length > 10) {
+        return res.json({ ok: true, mensagem: texto.trim(), fonte: 'gemini' });
+      }
+    } catch(e) {}
+  }
+
+  // Fallback: template aleatório
+  const idx = Math.floor(Math.random() * templates.length);
+  const nomeUsar = nome || '{nome}';
+  const mensagem = templates[idx].replace(/{nome}/g, nomeUsar);
+  res.json({ ok: true, mensagem, fonte: 'template' });
+});
+
 app.get('/', (req, res) => {
   res.send(`<!DOCTYPE html>
 <html lang="pt-BR">
@@ -628,14 +688,14 @@ input[type=file]{display:none}
 
 <div class="card">
   <h2>✉️ Mensagem</h2>
-  <textarea id="msg" placeholder="Digite sua mensagem...
-
-Exemplo: Olá {nome}, temos uma proposta de crédito consignado liberada pra você! Quer saber mais?"></textarea>
-  <div>
+  <textarea id="msg" placeholder="Digite sua mensagem ou clique em Gerar Mensagem..."></textarea>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
+    <button class="btn btn-green" onclick="gerarMensagem()" style="padding:8px 14px;font-size:13px">✨ Gerar Mensagem</button>
     <span class="tag" onclick="ins('{nome}')">+ nome</span>
     <span class="tag" onclick="ins('{cpf}')">+ cpf</span>
     <span class="tag" onclick="ins('{telefone}')">+ telefone</span>
   </div>
+  <div id="gerar-status" style="font-size:12px;color:#888;margin-top:6px"></div>
 </div>
 
 <div class="card">
@@ -728,6 +788,20 @@ async function atualizar(){
   }
 }
 
+
+async function gerarMensagem(){
+  const status = document.getElementById('gerar-status');
+  status.textContent = 'Gerando mensagem...';
+  const d = await fetch('/gerar-mensagem', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({nome: '{nome}'})
+  }).then(r => r.json());
+  if (d.ok) {
+    document.getElementById('msg').value = d.mensagem;
+    status.textContent = d.fonte === 'gemini' ? '✅ Gerado com IA' : '✅ Gerado automaticamente';
+  }
+}
 
 async function enviarAvulso(){
   const tel=document.getElementById('av-tel').value.trim();
