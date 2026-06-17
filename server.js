@@ -49,7 +49,7 @@ async function chamarGemini(historico, systemPrompt) {
       generationConfig: { maxOutputTokens: 500, temperature: 0.7 }
     });
     
-    const path = '/v1beta/models/gemini-1.5-flash:generateContent?key=' + ANTHROPIC_KEY;
+    const path = '/v1beta/models/gemini-2.0-flash:generateContent?key=' + ANTHROPIC_KEY;
     
     const req = https.request({
       hostname: 'generativelanguage.googleapis.com',
