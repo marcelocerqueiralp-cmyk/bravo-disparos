@@ -431,13 +431,30 @@ async function processarFila(mensagem) {
 
     try {
       const numero = formatarNumero(contato.telefone);
-      const texto = personalizarMensagem(mensagem, contato);
+
+      // Verificar se número tem WhatsApp
+      try {
+        const [result] = await sock.onWhatsApp(numero.replace('@s.whatsapp.net', ''));
+        if (!result || !result.exists) {
+          contato.status = 'sem_whatsapp';
+          stats.pendentes--;
+          addLog('info', '📵 Sem WhatsApp: ' + (contato.nome||contato.telefone));
+          continue;
+        }
+      } catch(e) {
+        // Se não conseguir verificar, tenta enviar mesmo assim
+      }
+
+      // Gerar mensagem variada para cada contato
+      const textoBase = personalizarMensagem(mensagem, contato);
+      const texto = textoBase;
 
       // Simular "digitando..." antes de enviar
       await sock.sendPresenceUpdate('composing', numero);
-      const tempoDigitando = Math.floor(Math.random() * 4000) + 2000; // 2-6 segundos digitando
+      const tempoDigitando = Math.floor(Math.random() * 5000) + 3000;
       await delay(tempoDigitando, tempoDigitando);
       await sock.sendPresenceUpdate('paused', numero);
+      await delay(500, 1000);
 
       await sock.sendMessage(numero, { text: texto });
       contato.status = 'enviado';
@@ -461,9 +478,9 @@ async function processarFila(mensagem) {
         addLog('info', '☕ Pausa humana de ' + pausaMin + ' minutos após 10 envios...');
         await delay(pausaMin * 60000, pausaMin * 60000);
       } else {
-        // Intervalo humano: 3 a 5 minutos
-        const minSeg = 180;
-        const maxSeg = 300;
+        // Intervalo humano: 5 a 10 minutos
+        const minSeg = 300;
+        const maxSeg = 600;
         const segundos = Math.floor(Math.random() * (maxSeg - minSeg)) + minSeg;
         const minutos = Math.floor(segundos / 60);
         const segs = segundos % 60;
@@ -584,15 +601,21 @@ app.post('/gerar-mensagem', async (req, res) => {
   const key = ANTHROPIC_KEY || process.env.ANTHROPIC_KEY;
 
   // Templates variados para servidores públicos da Bahia
+  const hora = new Date().getHours();
+  const saudacao = hora < 12 ? 'Bom dia' : hora < 18 ? 'Boa tarde' : 'Boa noite';
+  const n = nome || '{nome}';
+  
   const templates = [
-    'Olá {nome}! 👋 Sou o Ben, analista da Bravo Consig. Como servidor público da Bahia, você pode ter margem disponível para crédito consignado. Posso verificar quanto está liberado pra você?',
-    'Oi {nome}! 😊 Aqui é o Ben da Bravo Consig. Temos condições especiais de crédito consignado para servidores do Estado da Bahia. Quer saber quanto você tem disponível?',
-    '{nome}, bom dia! Sou analista da Bravo Consig 👋 Identificamos que você pode ter crédito consignado disponível. Parcelas no contracheque, sem burocracia. Posso verificar pra você?',
-    'Olá {nome}! Aqui é o Ben da Bravo Consig. Muitos servidores da Bahia estão aproveitando nossas condições de crédito consignado. Posso verificar sua margem disponível agora?',
-    '{nome}, tudo bem? 😊 Ben aqui, da Bravo Consig. Como servidor público, você tem direito às menores taxas de consignado. Quer que eu verifique quanto está liberado no seu contracheque?',
-    'Oi {nome}! Sou o Ben, da Bravo Consig 👋 Tenho uma proposta de crédito consignado para servidores da Bahia. Sem consulta ao SPC, desconto direto na folha. Posso te passar os detalhes?',
-    '{nome}, olá! Aqui é o Ben da Bravo Consig. Servidores públicos da Bahia podem ter até R$50mil em crédito consignado disponível. Quer saber o seu limite?',
-    'Olá {nome}! 😊 Ben aqui, analista da Bravo Consig. Temos aprovação rápida de crédito consignado para servidores do Estado. Posso verificar sua situação agora mesmo?'
+    saudacao + ', ' + n + '! Tudo bem?\nMarcelo, analista da Bravo Consig.\n\nTenho uma boa notícia sobre seu Consignado do Gov Bahia. Posso te encaminhar a análise?',
+    'Oi, ' + n + '! 👋\nAqui é o Marcelo da Bravo Consig.\n\nIdentificamos uma oportunidade no seu consignado. Posso te passar os detalhes?',
+    saudacao + ', ' + n + '!\nMarcelo aqui, da Bravo Consig.\n\nFizemos uma análise e encontramos algo interessante para você no consignado. Quer saber?',
+    'Oi ' + n + ', tudo bem?\nSou o Marcelo, analista da Bravo Consig.\n\nTenho novidades sobre seu consignado do Estado. Posso encaminhar?',
+    saudacao + ', ' + n + '! Como vai?\nMarcelo da Bravo Consig aqui.\n\nAnalisamos seu consignado e temos uma oportunidade disponível para você. Posso te passar?',
+    'Olá, ' + n + '! 😊\nMarcelo, Bravo Consig.\n\nTemos condições especiais de consignado para servidores da Bahia. Posso verificar o que está disponível para você?',
+    saudacao + ' ' + n + '!\nAqui é o Marcelo da Bravo Consig.\n\nVocê tem oportunidade de crédito consignado disponível. Quer que eu verifique os detalhes?',
+    'Oi ' + n + '! Tudo bem?\nMarcelo aqui, analista da Bravo Consig.\n\nFizemos uma análise no seu consignado e temos novidades. Posso te encaminhar?',
+    saudacao + ', ' + n + '! 👋\nSou o Marcelo da Bravo Consig.\n\nIdentificamos uma boa oportunidade no seu consignado do Gov Bahia. Posso te passar os detalhes?',
+    'Olá ' + n + ', tudo bem?\nMarcelo, Bravo Consig.\n\nFizemos uma análise aqui e liberou uma oportunidade no seu consignado. Posso te encaminhar?'
   ];
 
   // Tentar gerar com Gemini se tiver chave
