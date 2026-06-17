@@ -48,90 +48,44 @@ const conversas = {}; // { numero: { etapa, dados, historico } }
 function respostaAutomatica(texto, conv) {
   const t = texto.toLowerCase().trim();
   const etapa = conv.etapa || 'inicio';
+  const nome = conv.dados.nome || '';
+  const primeiroNome = nome.split(' ')[0] || '';
 
-  // Saudações / interesse
+  const hora = new Date().getHours();
+  const saudacao = hora < 12 ? 'Bom Dia!' : hora < 18 ? 'Boa Tarde!' : 'Boa Noite!';
+
   if (etapa === 'inicio') {
+    conv.etapa = 'aguardar_resposta';
+    if (primeiroNome) {
+      return saudacao + '\n' + primeiroNome + '.\n\nTudo Bem?';
+    }
+    return saudacao + '\n\nTudo Bem?';
+  }
+
+  if (etapa === 'aguardar_resposta') {
     conv.etapa = 'pedir_cpf';
-    return 'Olá! 😊 Sou o Ben, Analista da *Bravo Consig*!\n\nPode me dizer o seu *CPF* para eu buscar a sua análise de crédito?';
+    return 'Para verificar as oportunidades disponíveis para você, pode me informar seu *CPF*?';
   }
 
   if (etapa === 'pedir_cpf') {
-    const cpfMatch = texto.replace(/\D/g, '');
-    if (cpfMatch.length === 11) {
-      conv.dados.cpf = cpfMatch;
+    const cpfLimpo = texto.replace(/\D/g, '');
+    if (cpfLimpo.length === 11) {
+      conv.dados.cpf = cpfLimpo;
       conv.etapa = 'encerrado';
       conv.qualificado = true;
-      return `Obrigado! ✅ Recebi seu CPF.\n\nUm de nossos analistas já vai verificar sua situação e entrar em contato em breve! 😊\n\n*Bravo Consig* — Crédito com agilidade! 💚`;
+      return 'Perfeito! ✅\n\nJá estamos verificando as oportunidades disponíveis para você.\n\nEm breve nosso analista entrará em contato com as melhores opções! 😊';
     }
-    return 'Por favor, digite seu *CPF* apenas com os números 😊\n_(Ex: 12345678900)_';
-  }
-
-  if (etapa === 'pedir_nome') {
-    conv.dados.nome = texto.trim();
-    conv.etapa = 'pedir_tipo';
-    return `Prazer, *${conv.dados.nome}*! 👋\n\nVocê é:\n1️⃣ Aposentado/Pensionista INSS\n2️⃣ Servidor Público\n3️⃣ Trabalhador CLT\n\nDigite o número da sua opção:`;
-  }
-
-  if (etapa === 'pedir_tipo') {
-    if (t.includes('1') || t.match(/inss|aposentad|pensionist/)) {
-      conv.dados.tipo = 'inss';
-      conv.dados.taxaMensal = 0.0179;
-    } else if (t.includes('2') || t.match(/servidor|prefeitura|estado|federal/)) {
-      conv.dados.tipo = 'servidor';
-      conv.dados.taxaMensal = 0.0159;
-    } else if (t.includes('3') || t.match(/clt|empregad|empresa|carteira/)) {
-      conv.dados.tipo = 'clt';
-      conv.dados.taxaMensal = 0.0199;
-    } else {
-      return 'Por favor, digite *1*, *2* ou *3* para continuar 😊';
+    if (cpfLimpo.length > 0) {
+      return 'Por gentileza, informe o CPF completo com 11 dígitos 😊';
     }
-    conv.etapa = 'pedir_salario';
-    const label = conv.dados.tipo === 'inss' ? 'benefício' : 'salário';
-    return `Perfeito! 👍\n\nQual o valor do seu *${label} mensal*?\n_(Ex: 1500 ou R$ 2.300)_`;
-  }
-
-  if (etapa === 'pedir_salario') {
-    const match = texto.match(/[\d.,]+/);
-    if (!match) return 'Pode me informar o valor do seu salário/benefício? 😊\n_(Ex: 1500 ou R$ 2.300)_';
-    const val = parseFloat(match[0].replace(/\./g, '').replace(',', '.'));
-    if (val < 500 || val > 50000) return 'Valor inválido. Por favor informe seu salário mensal 😊';
-    
-    conv.dados.salario = val;
-    conv.etapa = 'apresentar_proposta';
-    
-    // Calcular simulação
-    const margem = val * (conv.dados.tipo === 'inss' ? 0.35 : 0.30);
-    const taxa = conv.dados.taxaMensal;
-    const prazo = 84;
-    const fator = (taxa * Math.pow(1 + taxa, prazo)) / (Math.pow(1 + taxa, prazo) - 1);
-    const liberado = (margem / fator).toFixed(2);
-    const parcelaFmt = margem.toFixed(2).replace('.', ',');
-    const liberadoFmt = parseFloat(liberado).toLocaleString('pt-BR', {minimumFractionDigits: 2});
-    
-    conv.dados.valorLiberado = liberado;
-    conv.qualificado = true;
-    
-    return `🎉 *${conv.dados.nome}*, tenho uma ótima notícia!\n\n💰 *Valor liberado: R$ ${liberadoFmt}*\n📅 Em até *${prazo}x* de R$ *${parcelaFmt}*\n✅ Sem consulta ao SPC/Serasa\n✅ Dinheiro na conta em até 24h\n\nTem interesse em prosseguir? Digite *SIM* para falar com nosso consultor! 😊`;
-  }
-
-  if (etapa === 'apresentar_proposta') {
-    if (t.match(/sim|quero|confirmo|yes|pode|vamo/)) {
-      conv.etapa = 'encerrado';
-      return `Ótimo! 🎊\n\nUm de nossos consultores vai entrar em contato agora mesmo para finalizar sua proposta!\n\nObrigado pela confiança na *Bravo Consig*! 💚`;
-    }
-    if (t.match(/n[aã]o|nao|neg|outro/)) {
-      conv.etapa = 'encerrado';
-      return 'Tudo bem! 😊 Se mudar de ideia, pode nos chamar a qualquer momento. Tenha um ótimo dia! 👋';
-    }
-    return 'Digite *SIM* para prosseguir ou *NÃO* para encerrar 😊';
+    return 'Para verificar as oportunidades disponíveis, pode me informar seu *CPF*?';
   }
 
   if (etapa === 'encerrado') {
-    conv.etapa = 'inicio';
-    return 'Olá! 😊 Posso te ajudar com algo mais?';
+    return 'Nosso analista já está verificando sua situação e entrará em contato em breve! 😊';
   }
 
-  return 'Olá! 😊 Posso te ajudar com informações sobre crédito consignado. Digite *OI* para começar!';
+  return saudacao + '\n\nComo posso te ajudar?';
 }
 
 async function chamarGemini(historico, systemPrompt) {
