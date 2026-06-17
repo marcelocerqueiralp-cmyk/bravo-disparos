@@ -4,6 +4,7 @@ const multer = require('multer');
 const XLSX = require('xlsx');
 const QRCode = require('qrcode');
 const fs = require('fs');
+const https = require('https');
 const path = require('path');
 const pino = require('pino');
 
@@ -28,6 +29,150 @@ let disparando = false;
 let pausado = false;
 let logLines = [];
 let stats = { total: 0, enviados: 0, erros: 0, pendentes: 0 };
+
+// Agente IA
+const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY || '';
+const NUMERO_MARCELO = process.env.NUMERO_MARCELO || ''; // ex: 5577991234567
+const conversas = {}; // { numero: { etapa, dados, historico } }
+
+async function chamarClaude(historico, systemPrompt) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 500,
+      system: systemPrompt,
+      messages: historico
+    });
+    const req = https.request({
+      hostname: 'api.anthropic.com',
+      path: '/v1/messages',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': ANTHROPIC_KEY,
+        'anthropic-version': '2023-06-01'
+      }
+    }, res => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try {
+          const d = JSON.parse(data);
+          resolve(d.content?.[0]?.text || '');
+        } catch(e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+function simularCredito(dados) {
+  const { tipo, salario } = dados;
+  let margem = 0;
+  let taxaMensal = 0.0179;
+  
+  if (tipo === 'inss') {
+    margem = salario * 0.35;
+    taxaMensal = 0.0179;
+  } else if (tipo === 'servidor') {
+    margem = salario * 0.30;
+    taxaMensal = 0.0159;
+  } else {
+    margem = salario * 0.30;
+    taxaMensal = 0.0199;
+  }
+  
+  const prazo = 84;
+  const fator = (taxaMensal * Math.pow(1 + taxaMensal, prazo)) / (Math.pow(1 + taxaMensal, prazo) - 1);
+  const valorLiberado = margem / fator;
+  
+  return {
+    margem: margem.toFixed(2),
+    valorLiberado: valorLiberado.toFixed(2),
+    parcela: margem.toFixed(2),
+    prazo,
+    taxa: (taxaMensal * 100).toFixed(2)
+  };
+}
+
+const SYSTEM_PROMPT = `Você é Ben, consultor de crédito consignado da Bravo Consig, em Bahia, Brasil.
+Seu objetivo é qualificar leads, fazer simulações e agendar atendimento com Marcelo.
+
+FLUXO:
+1. Cumprimente e pergunte o nome
+2. Pergunte se é aposentado/pensionista INSS, servidor público ou CLT
+3. Pergunte o valor do benefício/salário
+4. Apresente a simulação de crédito
+5. Pergunte se quer agendar com Marcelo
+
+REGRAS:
+- Seja simpático, informal mas profissional
+- Respostas curtas (máximo 3 linhas)
+- Nunca mencione taxa de juros a menos que perguntado
+- Sempre foque no valor que a pessoa vai receber na mão
+- Se a pessoa disser que não tem interesse, agradeça e encerre
+- Não invente informações
+
+Quando tiver todos os dados (nome, tipo, salário), inclua no fim da resposta a tag: [LEAD_QUALIFICADO]`;
+
+async function processarMensagemAgente(numero, texto) {
+  if (!ANTHROPIC_KEY) return null;
+  
+  if (!conversas[numero]) {
+    conversas[numero] = { historico: [], dados: {}, qualificado: false };
+  }
+  
+  const conv = conversas[numero];
+  conv.historico.push({ role: 'user', content: texto });
+  
+  // Extrair dados mencionados
+  const textoLower = texto.toLowerCase();
+  if (textoLower.includes('inss') || textoLower.includes('aposentad') || textoLower.includes('pensionist')) {
+    conv.dados.tipo = 'inss';
+  } else if (textoLower.includes('servidor') || textoLower.includes('funcionário') || textoLower.includes('prefeitura') || textoLower.includes('estado')) {
+    conv.dados.tipo = 'servidor';
+  } else if (textoLower.includes('clt') || textoLower.includes('empregad') || textoLower.includes('empresa')) {
+    conv.dados.tipo = 'clt';
+  }
+  
+  const valorMatch = texto.match(/R?\$?\s*(\d[\d.,]+)/);
+  if (valorMatch) {
+    const val = parseFloat(valorMatch[1].replace(/\./g, '').replace(',', '.'));
+    if (val > 500 && val < 50000) conv.dados.salario = val;
+  }
+  
+  // Se tiver dados suficientes, incluir simulação no contexto
+  let contextoSimulacao = '';
+  if (conv.dados.tipo && conv.dados.salario) {
+    const sim = simularCredito(conv.dados);
+    contextoSimulacao = `\n\nDADOS DO LEAD: tipo=${conv.dados.tipo}, salário=R$${conv.dados.salario}\nSIMULAÇÃO: Pode liberar R$${sim.valorLiberado} em ${sim.prazo}x de R$${sim.parcela}`;
+  }
+  
+  const resposta = await chamarClaude(conv.historico, SYSTEM_PROMPT + contextoSimulacao);
+  
+  // Verificar se lead foi qualificado
+  if (resposta.includes('[LEAD_QUALIFICADO]') && !conv.qualificado) {
+    conv.qualificado = true;
+    const sim = conv.dados.salario ? simularCredito(conv.dados) : null;
+    const msg = `🔥 *LEAD QUALIFICADO*\n\nNúmero: ${numero.replace('@s.whatsapp.net', '')}\nTipo: ${conv.dados.tipo || 'N/I'}\nSalário: R$${conv.dados.salario || 'N/I'}${sim ? '\nValor a liberar: R$' + sim.valorLiberado : ''}\n\nVeja a conversa no painel.`;
+    
+    if (NUMERO_MARCELO && sock) {
+      sock.sendMessage(formatarNumero(NUMERO_MARCELO), { text: msg }).catch(() => {});
+    }
+    addLog('ok', `🔥 Lead qualificado: ${numero}`);
+  }
+  
+  const respostaLimpa = resposta.replace('[LEAD_QUALIFICADO]', '').trim();
+  conv.historico.push({ role: 'assistant', content: respostaLimpa });
+  
+  // Limitar histórico
+  if (conv.historico.length > 20) conv.historico = conv.historico.slice(-20);
+  
+  return respostaLimpa;
+}
+
 
 function addLog(tipo, msg) {
   const hora = new Date().toLocaleTimeString('pt-BR');
@@ -99,6 +244,33 @@ async function conectarWhatsApp() {
   });
 
   sock.ev.on('creds.update', saveCreds);
+
+  // Receber mensagens e acionar agente
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (type !== 'notify') return;
+    for (const msg of messages) {
+      if (msg.key.fromMe) continue;
+      if (!msg.message) continue;
+      const numero = msg.key.remoteJid;
+      if (numero.includes('g.us')) continue; // ignorar grupos
+      const texto = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+      if (!texto) continue;
+      
+      addLog('info', `📨 Mensagem de ${numero.replace('@s.whatsapp.net','')}: ${texto.substring(0,40)}`);
+      
+      try {
+        const resposta = await processarMensagemAgente(numero, texto);
+        if (resposta && sock) {
+          await delay(1500, 3000);
+          await sock.sendMessage(numero, { text: resposta });
+          addLog('ok', `🤖 Agente respondeu ${numero.replace('@s.whatsapp.net','')}`);
+        }
+      } catch(e) {
+        addLog('erro', `❌ Erro agente: ${e.message}`);
+      }
+    }
+  });
+
 }
 
 async function processarFila(mensagem) {
@@ -221,6 +393,32 @@ app.post('/reiniciar', (req, res) => {
   res.json({ ok: true });
 });
 
+
+app.get('/leads', (req, res) => {
+  const leads = Object.entries(conversas).map(([num, conv]) => ({
+    numero: num.replace('@s.whatsapp.net', ''),
+    qualificado: conv.qualificado,
+    dados: conv.dados,
+    mensagens: conv.historico.length
+  }));
+  res.json({ leads });
+});
+
+app.post('/config-agente', (req, res) => {
+  const { key, numeroMarcelo } = req.body;
+  if (key) process.env.ANTHROPIC_KEY = key;
+  if (numeroMarcelo) process.env.NUMERO_MARCELO = numeroMarcelo;
+  // Atualizar variáveis
+  if (key) global.ANTHROPIC_KEY_RUNTIME = key;
+  res.json({ ok: true });
+});
+
+app.delete('/conversa/:numero', (req, res) => {
+  const num = req.params.numero + '@s.whatsapp.net';
+  delete conversas[num];
+  res.json({ ok: true });
+});
+
 app.get('/', (req, res) => {
   res.send(`<!DOCTYPE html>
 <html lang="pt-BR">
@@ -325,7 +523,25 @@ Exemplo: Olá {nome}, temos uma proposta de crédito consignado liberada pra voc
 </div>
 
 <div class="card">
-  <h2>🚀 Controles</h2>
+  
+<div class="card">
+  <h2>🤖 Agente IA (Ben)</h2>
+  <div id="agente-status" style="margin-bottom:12px;padding:10px;background:#111;border-radius:8px;font-size:13px;color:#888">
+    Configure a API Key para ativar o agente
+  </div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+    <input id="ag-key" type="password" placeholder="Anthropic API Key (sk-ant-...)" style="flex:2;min-width:200px;background:#111;border:1px solid #333;color:#f0f0f0;border-radius:8px;padding:10px;font-size:13px">
+    <input id="ag-num" type="text" placeholder="Seu número (ex: 5577991234567)" style="flex:1;min-width:160px;background:#111;border:1px solid #333;color:#f0f0f0;border-radius:8px;padding:10px;font-size:13px">
+    <button class="btn btn-green" onclick="salvarAgente()">💾 Ativar</button>
+  </div>
+  <div style="font-size:12px;color:#666;margin-bottom:14px">
+    Quando alguém responder o disparo, o Ben responde automaticamente, qualifica o lead e te avisa no WhatsApp.
+  </div>
+  <h2 style="margin-bottom:10px">🔥 Leads Qualificados</h2>
+  <div id="leads-lista" style="font-size:13px;color:#888">Nenhum lead ainda.</div>
+  <button class="btn btn-gray" onclick="verLeads()" style="margin-top:10px">🔄 Atualizar Leads</button>
+</div>
+<h2>🚀 Controles</h2>
   <div class="flex">
     <button class="btn btn-green" onclick="disparar()">▶ Iniciar Disparo</button>
     <button class="btn btn-red" id="btn-pausar" onclick="pausar()" disabled>⏸ Pausar</button>
@@ -406,6 +622,33 @@ async function enviarAvulso(){
   const d=await fetch('/enviar-avulso',{method:'POST',headers:{"Content-Type":"application/json"},body:JSON.stringify({telefone:tel,mensagem:msg})}).then(r=>r.json());
   res.innerHTML=d.ok?'<span style="color:#25d366">✅ Enviado!</span>':'<span style="color:#ff4444">❌ '+d.erro+'</span>';
 }
+
+async function salvarAgente(){
+  const key=document.getElementById('ag-key').value.trim();
+  const num=document.getElementById('ag-num').value.trim();
+  if(!key)return alert('Digite a API Key');
+  const d=await fetch('/config-agente',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,numeroMarcelo:num})}).then(r=>r.json());
+  if(d.ok){
+    document.getElementById('agente-status').innerHTML='<span style="color:#25d366">✅ Agente Ben ativado! Responde automaticamente quem enviar mensagem.</span>';
+  }
+}
+
+async function verLeads(){
+  const d=await fetch('/leads').then(r=>r.json());
+  const box=document.getElementById('leads-lista');
+  if(!d.leads.length){box.innerHTML='<span style="color:#888">Nenhum lead ainda.</span>';return;}
+  box.innerHTML=d.leads.map(l=>`
+    <div style="background:#111;border:1px solid ${l.qualificado?'#25d366':'#333'};border-radius:8px;padding:12px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="font-weight:700;color:${l.qualificado?'#25d366':'#fff'}">${l.numero} ${l.qualificado?'🔥 QUALIFICADO':''}</span>
+        <span style="color:#666;font-size:11px">${l.mensagens} mensagens</span>
+      </div>
+      ${l.dados.tipo?'<div style="color:#aaa;font-size:12px;margin-top:4px">Tipo: '+l.dados.tipo+(l.dados.salario?' | Salário: R$'+l.dados.salario:'')+'</div>':''}
+    </div>
+  `).join('');
+}
+
+setInterval(verLeads, 10000);
 setInterval(atualizar,2000);
 atualizar();
 </script>
