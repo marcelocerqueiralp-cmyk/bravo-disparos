@@ -35,22 +35,29 @@ let ANTHROPIC_KEY = process.env.ANTHROPIC_KEY || '';
 const NUMERO_MARCELO = process.env.NUMERO_MARCELO || ''; // ex: 5577991234567
 const conversas = {}; // { numero: { etapa, dados, historico } }
 
-async function chamarClaude(historico, systemPrompt) {
+async function chamarGemini(historico, systemPrompt) {
   return new Promise((resolve, reject) => {
+    // Converter histórico para formato Gemini
+    const contents = historico.map(m => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }]
+    }));
+    
     const body = JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 500,
-      system: systemPrompt,
-      messages: historico
+      system_instruction: { parts: [{ text: systemPrompt }] },
+      contents: contents,
+      generationConfig: { maxOutputTokens: 500, temperature: 0.7 }
     });
+    
+    const path = '/v1beta/models/gemini-1.5-flash:generateContent?key=' + ANTHROPIC_KEY;
+    
     const req = https.request({
-      hostname: 'api.anthropic.com',
-      path: '/v1/messages',
+      hostname: 'generativelanguage.googleapis.com',
+      path: path,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_KEY,
-        'anthropic-version': '2023-06-01'
+        'Content-Length': Buffer.byteLength(body)
       }
     }, res => {
       let data = '';
@@ -58,7 +65,8 @@ async function chamarClaude(historico, systemPrompt) {
       res.on('end', () => {
         try {
           const d = JSON.parse(data);
-          resolve(d.content?.[0]?.text || '');
+          const text = d.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          resolve(text);
         } catch(e) { reject(e); }
       });
     });
@@ -150,7 +158,7 @@ async function processarMensagemAgente(numero, texto) {
     contextoSimulacao = `\n\nDADOS DO LEAD: tipo=${conv.dados.tipo}, salário=R$${conv.dados.salario}\nSIMULAÇÃO: Pode liberar R$${sim.valorLiberado} em ${sim.prazo}x de R$${sim.parcela}`;
   }
   
-  const resposta = await chamarClaude(conv.historico, SYSTEM_PROMPT + contextoSimulacao);
+  const resposta = await chamarGemini(conv.historico, SYSTEM_PROMPT + contextoSimulacao);
   
   // Verificar se lead foi qualificado
   if (resposta.includes('[LEAD_QUALIFICADO]') && !conv.qualificado) {
@@ -528,7 +536,7 @@ Exemplo: Olá {nome}, temos uma proposta de crédito consignado liberada pra voc
     Configure a API Key para ativar o agente
   </div>
   <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">
-    <input id="ag-key" type="password" placeholder="Anthropic API Key (sk-ant-...)" style="flex:2;min-width:200px;background:#111;border:1px solid #333;color:#f0f0f0;border-radius:8px;padding:10px;font-size:13px">
+    <input id="ag-key" type="password" placeholder="Google Gemini API Key" style="flex:2;min-width:200px;background:#111;border:1px solid #333;color:#f0f0f0;border-radius:8px;padding:10px;font-size:13px">
     <input id="ag-num" type="text" placeholder="Seu número (ex: 5577991234567)" style="flex:1;min-width:160px;background:#111;border:1px solid #333;color:#f0f0f0;border-radius:8px;padding:10px;font-size:13px">
     <button class="btn btn-green" onclick="salvarAgente()">💾 Ativar</button>
   </div>
