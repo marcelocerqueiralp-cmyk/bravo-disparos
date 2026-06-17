@@ -15,6 +15,16 @@ const {
   fetchLatestBaileysVersion
 } = require('@whiskeysockets/baileys');
 
+
+// Carregar .env se existir
+try {
+  const envFile = require('fs').readFileSync('.env', 'utf8');
+  envFile.split('\n').forEach(line => {
+    const [key, ...vals] = line.split('=');
+    if (key && vals.length) process.env[key.trim()] = vals.join('=').trim();
+  });
+} catch(e) {}
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -118,8 +128,49 @@ function respostaAutomatica(texto, conv) {
 }
 
 async function chamarGemini(historico, systemPrompt) {
-  // Versão sem API - respostas automáticas
-  return null;
+  const key = ANTHROPIC_KEY || process.env.ANTHROPIC_KEY;
+  if (!key) return null;
+
+  const contents = historico.map(m => ({
+    role: m.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: m.content }]
+  }));
+
+  const bodyObj = {
+    system_instruction: { parts: [{ text: systemPrompt }] },
+    contents: contents,
+    generationConfig: { maxOutputTokens: 400, temperature: 0.8 }
+  };
+
+  return new Promise((resolve) => {
+    const bodyStr = JSON.stringify(bodyObj);
+    const url = new URL('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent');
+    url.searchParams.set('key', key);
+    
+    const req = https.request({
+      hostname: url.hostname,
+      path: url.pathname + url.search,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(bodyStr)
+      }
+    }, res => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try {
+          const d = JSON.parse(data);
+          const text = d.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          if (!text && d.error) addLog('erro', 'Gemini erro: ' + d.error.message);
+          resolve(text || null);
+        } catch(e) { resolve(null); }
+      });
+    });
+    req.on('error', () => resolve(null));
+    req.write(bodyStr);
+    req.end();
+  });
 }
 
 function simularCredito(dados) {
@@ -204,8 +255,13 @@ async function processarMensagemAgente(numero, texto) {
     contextoSimulacao = `\n\nDADOS DO LEAD: tipo=${conv.dados.tipo}, salário=R$${conv.dados.salario}\nSIMULAÇÃO: Pode liberar R$${sim.valorLiberado} em ${sim.prazo}x de R$${sim.parcela}`;
   }
   
-  // Usar resposta automática
-  const resposta = respostaAutomatica(texto, conv);
+  // Tentar Gemini, fallback para resposta automática
+  let resposta = null;
+  const key = ANTHROPIC_KEY || process.env.ANTHROPIC_KEY;
+  if (key) {
+    try { resposta = await chamarGemini(conv.historico, SYSTEM_PROMPT + contextoSimulacao); } catch(e) {}
+  }
+  if (!resposta) resposta = respostaAutomatica(texto, conv);
   
   // Verificar se lead foi qualificado
   if (resposta.includes('[LEAD_QUALIFICADO]') && !conv.qualificado) {
