@@ -51,12 +51,18 @@ function respostaAutomatica(texto, conv) {
 
   // Saudações / interesse
   if (etapa === 'inicio') {
-    if (t.match(/sim|quero|interesse|oi|ol[aá]|bom dia|boa tarde|boa noite|info|saib/)) {
-      conv.etapa = 'pedir_nome';
-      return 'Olá! 😊 Sou o Ben, consultor da *Bravo Consig*!\n\nFico feliz com seu interesse! Para preparar sua proposta, pode me dizer seu *nome completo*?';
+    conv.etapa = 'pedir_cpf';
+    return 'Olá! 😊 Sou o Ben, Analista da *Bravo Consig*!\n\nPode me dizer o seu *CPF* para eu buscar a sua análise de crédito?';
+  }
+
+  if (etapa === 'pedir_cpf') {
+    const cpfMatch = texto.replace(/\D/g, '');
+    if (cpfMatch.length === 11) {
+      conv.dados.cpf = cpfMatch;
+      conv.etapa = 'pedir_tipo';
+      return `Obrigado! 👍 Encontrei seu cadastro.\n\nVocê é:\n1️⃣ Aposentado/Pensionista INSS\n2️⃣ Servidor Público\n3️⃣ Trabalhador CLT\n\nDigite o número da sua opção:`;
     }
-    conv.etapa = 'pedir_nome';
-    return 'Olá! 😊 Sou o Ben, consultor da *Bravo Consig*!\n\nPode me dizer seu *nome completo* para eu preparar sua proposta?';
+    return 'Por favor, digite seu *CPF* apenas com os números 😊\n_(Ex: 12345678900)_';
   }
 
   if (etapa === 'pedir_nome') {
