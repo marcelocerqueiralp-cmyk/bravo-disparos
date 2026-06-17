@@ -461,11 +461,13 @@ async function processarFila(mensagem) {
         addLog('info', '☕ Pausa humana de ' + pausaMin + ' minutos após 10 envios...');
         await delay(pausaMin * 60000, pausaMin * 60000);
       } else {
-        // Intervalo humano: 45 segundos a 3 minutos
-        const minSeg = 45;
-        const maxSeg = 180;
+        // Intervalo humano: 3 a 5 minutos
+        const minSeg = 180;
+        const maxSeg = 300;
         const segundos = Math.floor(Math.random() * (maxSeg - minSeg)) + minSeg;
-        addLog('info', '⏳ Próximo envio em ' + segundos + 's...');
+        const minutos = Math.floor(segundos / 60);
+        const segs = segundos % 60;
+        addLog('info', '⏳ Próximo envio em ' + minutos + 'min ' + segs + 's...');
         await delay(segundos * 1000, segundos * 1000);
       }
     }
