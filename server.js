@@ -31,7 +31,7 @@ let logLines = [];
 let stats = { total: 0, enviados: 0, erros: 0, pendentes: 0 };
 
 // Agente IA
-const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY || '';
+let ANTHROPIC_KEY = process.env.ANTHROPIC_KEY || '';
 const NUMERO_MARCELO = process.env.NUMERO_MARCELO || ''; // ex: 5577991234567
 const conversas = {}; // { numero: { etapa, dados, historico } }
 
@@ -406,10 +406,8 @@ app.get('/leads', (req, res) => {
 
 app.post('/config-agente', (req, res) => {
   const { key, numeroMarcelo } = req.body;
-  if (key) process.env.ANTHROPIC_KEY = key;
-  if (numeroMarcelo) process.env.NUMERO_MARCELO = numeroMarcelo;
-  // Atualizar variáveis
-  if (key) global.ANTHROPIC_KEY_RUNTIME = key;
+  if (key) { process.env.ANTHROPIC_KEY = key; ANTHROPIC_KEY = key; }
+  if (numeroMarcelo) { process.env.NUMERO_MARCELO = numeroMarcelo; }
   res.json({ ok: true });
 });
 
