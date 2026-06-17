@@ -59,8 +59,9 @@ function respostaAutomatica(texto, conv) {
     const cpfMatch = texto.replace(/\D/g, '');
     if (cpfMatch.length === 11) {
       conv.dados.cpf = cpfMatch;
-      conv.etapa = 'pedir_tipo';
-      return `Obrigado! 👍 Encontrei seu cadastro.\n\nVocê é:\n1️⃣ Aposentado/Pensionista INSS\n2️⃣ Servidor Público\n3️⃣ Trabalhador CLT\n\nDigite o número da sua opção:`;
+      conv.etapa = 'encerrado';
+      conv.qualificado = true;
+      return `Obrigado! ✅ Recebi seu CPF.\n\nUm de nossos analistas já vai verificar sua situação e entrar em contato em breve! 😊\n\n*Bravo Consig* — Crédito com agilidade! 💚`;
     }
     return 'Por favor, digite seu *CPF* apenas com os números 😊\n_(Ex: 12345678900)_';
   }
