@@ -636,16 +636,20 @@ async function salvarAgente(){
 async function verLeads(){
   const d=await fetch('/leads').then(r=>r.json());
   const box=document.getElementById('leads-lista');
-  if(!d.leads.length){box.innerHTML='<span style="color:#888">Nenhum lead ainda.</span>';return;}
-  box.innerHTML=d.leads.map(l=>`
-    <div style="background:#111;border:1px solid ${l.qualificado?'#25d366':'#333'};border-radius:8px;padding:12px;margin-bottom:8px">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <span style="font-weight:700;color:${l.qualificado?'#25d366':'#fff'}">${l.numero} ${l.qualificado?'🔥 QUALIFICADO':''}</span>
-        <span style="color:#666;font-size:11px">${l.mensagens} mensagens</span>
-      </div>
-      ${l.dados.tipo?'<div style="color:#aaa;font-size:12px;margin-top:4px">Tipo: '+l.dados.tipo+(l.dados.salario?' | Salário: R$'+l.dados.salario:'')+'</div>':''}
-    </div>
-  `).join('');
+  if(!d.leads||!d.leads.length){box.innerHTML='<span style="color:#888">Nenhum lead ainda.</span>';return;}
+  let html='';
+  d.leads.forEach(function(l){
+    const cor=l.qualificado?'#25d366':'#333';
+    const corNome=l.qualificado?'#25d366':'#fff';
+    const badge=l.qualificado?' 🔥 QUALIFICADO':'';
+    const dados=l.dados.tipo?('<div style="color:#aaa;font-size:12px;margin-top:4px">Tipo: '+l.dados.tipo+(l.dados.salario?' | Salário: R$'+l.dados.salario:'')+'</div>'):'';
+    html+='<div style="background:#111;border:1px solid '+cor+';border-radius:8px;padding:12px;margin-bottom:8px">';
+    html+='<div style="display:flex;justify-content:space-between;align-items:center">';
+    html+='<span style="font-weight:700;color:'+corNome+'">'+l.numero+badge+'</span>';
+    html+='<span style="color:#666;font-size:11px">'+l.mensagens+' mensagens</span>';
+    html+='</div>'+dados+'</div>';
+  });
+  box.innerHTML=html;
 }
 
 setInterval(verLeads, 10000);
