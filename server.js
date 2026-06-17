@@ -199,6 +199,21 @@ app.post('/disparar', (req, res) => {
 
 app.post('/pausar', (req, res) => { pausado = true; res.json({ ok: true }); });
 
+app.post('/enviar-avulso', async (req, res) => {
+  const { telefone, mensagem } = req.body;
+  if (!telefone || !mensagem) return res.status(400).json({ ok: false, erro: 'Telefone e mensagem obrigatórios' });
+  if (!conectado) return res.status(400).json({ ok: false, erro: 'WhatsApp não conectado' });
+  try {
+    const numero = formatarNumero(telefone);
+    await sock.sendMessage(numero, { text: mensagem });
+    addLog('ok', `✅ Avulso enviado para ${telefone}`);
+    res.json({ ok: true });
+  } catch (e) {
+    addLog('erro', `❌ Erro avulso ${telefone}: ${e.message}`);
+    res.status(500).json({ ok: false, erro: e.message });
+  }
+});
+
 app.post('/reiniciar', (req, res) => {
   fila.forEach(c => { if (c.status !== 'enviado') { c.status = 'pendente'; c.erro = ''; } });
   stats.pendentes = fila.filter(c => c.status === 'pendente').length;
@@ -274,6 +289,17 @@ input[type=file]{display:none}
 </div>
 
 <div class="card">
+<div class="card">
+  <h2>📤 Envio Avulso</h2>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+    <input id="av-tel" type="text" placeholder="Telefone (ex: 77991234567)" style="flex:1;min-width:180px;background:#111;border:1px solid #333;color:#f0f0f0;border-radius:8px;padding:10px;font-size:14px">
+  </div>
+  <textarea id="av-msg" placeholder="Mensagem avulsa..." style="width:100%;background:#111;border:1px solid #333;color:#f0f0f0;border-radius:8px;padding:10px;font-size:14px;resize:vertical;min-height:70px;margin-bottom:10px"></textarea>
+  <button class="btn btn-green" onclick="enviarAvulso()">📤 Enviar Agora</button>
+  <div id="av-result" style="margin-top:8px;font-size:13px"></div>
+</div>
+
+
   <h2>📂 Importar Planilha</h2>
   <label for="arq">
     <div class="upload-area">
@@ -370,6 +396,16 @@ async function atualizar(){
   }
 }
 
+
+async function enviarAvulso(){
+  const tel=document.getElementById('av-tel').value.trim();
+  const msg=document.getElementById('av-msg').value.trim();
+  const res=document.getElementById('av-result');
+  if(!tel||!msg)return res.innerHTML='<span style="color:#ff4444">Preencha telefone e mensagem</span>';
+  res.innerHTML='<span style="color:#888">Enviando...</span>';
+  const d=await fetch('/enviar-avulso',{method:'POST',headers:{"Content-Type":"application/json"},body:JSON.stringify({telefone:tel,mensagem:msg})}).then(r=>r.json());
+  res.innerHTML=d.ok?'<span style="color:#25d366">✅ Enviado!</span>':'<span style="color:#ff4444">❌ '+d.erro+'</span>';
+}
 setInterval(atualizar,2000);
 atualizar();
 </script>
